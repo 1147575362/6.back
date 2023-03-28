@@ -1,0 +1,268 @@
+项目内容：
+	1.帧缓冲设备
+	
+	lcd屏幕显示原理：
+		开发板屏幕：分辨率 800*480
+		由480行的组成，每一行有800个像素点
+		
+	像素点（pixel）：能显示颜色的最小单位
+	
+	怎么显示图案？
+		给像素点进行上色，一个颜色值
+	
+	像素点怎么上色？颜色？
+		颜色：	A  		R  	G     B --》每一个占8个位
+			  透明度   red green blue
+			  
+		红色：0x00ff0000	--》A = 0
+		
+	帧缓冲设备：文件		lcd屏幕文件路径 /dev/fb0
+		要给像素点上色：打开帧缓冲设备  /dev/fb0
+						就可以进行写入	write
+						写多少个字节    800*480*4  
+						颜色是什么		0x00ffffff--》全白
+						
+		用write写入这种方式比较慢
+		
+	在内存开辟一个缓存区，用来保存屏幕上每个像素点的颜色值，然后应用程序
+	直接将要写入的颜色写入进缓存区，那么就实现了屏幕的上色：
+		内存至少要800*480*4个字节
+	
+	这种缓冲区，在linux下面称为帧缓冲Fram Buffer，帧缓冲设备是对具体的图像硬件
+	的一种抽象，它的上层应用不必关心具体的硬件实现细节，上层图形应用只需要在
+	Fram Buffer里面写入合适的颜色值，那么帧缓冲的驱动就会以适当的刷新频率去把
+	颜色值写入到屏幕上
+	
+	缓冲区本身是一块内存，我们是不是只要知道这个内存的地址，就可以通过指针
+	去访问
+	
+	怎么去获取这个地址呢？
+	NAME
+        mmap, munmap - map or unmap files or devices into memory
+
+	SYNOPSIS
+        #include <sys/mman.h>
+
+        void *mmap(void *addr, size_t length, int prot, int flags,
+                  int fd, off_t offset);
+			addr：你要将屏幕设备映射到哪个地址 NULL 由系统自行分配
+			length：要映射的大小	800*480*4
+			prot：指定映射区域的权限 PROT_WRITE | PROT_READ
+				PROT_EXEC  Pages may be executed.
+
+				PROT_READ  Pages may be read.
+
+				PROT_WRITE Pages may be written.
+
+				PROT_NONE  Pages may not be accessed.
+			
+			flags：映射方式 MAP_SHARED
+				MAP_SHARED：共享映射，你对映射区的操作立即反馈到文件/内核
+				MAP_PRIVATE：私有映射，你对映射区的操作仅自己可见
+			fd:要映射的设备的文件描述符 lcd_fd
+			offset:你要从这个设备的哪里开始映射 0
+		返回值
+			成功，返回映射区的首地址
+			失败，返回NULL
+					
+				  
+        int munmap(void *addr, size_t length);
+			addr：要解映射的空间的首地址
+			length：这块空间的大小
+		返回值：
+			成功，返回0
+			失败，返回-1
+			
+	作业：在屏幕上显示一个大风车、正方形、圆形
+	
+	扫雷- 贪吃蛇 - 计算器（+ - * /）- 相册 - 打字游戏 - 2048 - 抽奖转盘
+	熊启扬	张晟					  李盼	   盛强    周贵宝 
+	随机数生成：srand(time(0))		rand()
+	
+	2.bmp文件的解析：
+		bmp文件：微软公司制定的一种无压缩的图片格式文件
+			无压缩：保存了图片所有颜色值（RGB）
+		bmp文件格式
+			2.1：BITMAP文件头
+				大小：14Bytes
+				前两个字节：BM
+				最后4个字节：像素数组的偏移地址
+				
+			2.2：DIB头
+				大小：40Bytes
+				位图宽度：偏移量 0x12h
+					每一行有多少个像素点
+					
+				位图高度：偏移量 0x16h
+					有多少行
+					
+				色深	：偏移量 0x1ch
+					24：像素数组保存的是RGB  --》A==0
+					32：像素数组保存的是ARGB
+			
+			2.3：调色板
+				24/32不需要
+				
+			2.4：像素数组：偏移量 0x36h
+				保存颜色分量的地方
+				RGB：一个字节一个字节的保存
+				一个像素点：4个字节  ==》 unsigned int color
+					color = A<<24 | R<<16 | G<<8 | B;
+				多少个像素点：
+					位图宽度*位图高度
+				像素数组多大？
+					位图宽度*位图高度*色深/8
+				如果位图宽度不是4的倍数，那么就会在像素数组后面填充
+				一些空白字节使之成为4的倍数
+					int blank = 0;
+					if(位图宽度%4)
+					｛
+						blank = 4 -	位图宽度%4;
+					｝
+				位图宽度、高度、色深怎么去获取？像素数组怎么保存呢？
+				//打开图片文件
+				int fd = open("./1.bmp",O_RDONLY);
+				if(fd < 0)
+				{
+					perror("open bmp error");
+					return -1;
+				}
+				//定位光标到合适的位置-->获取位图高度、宽度、色深
+				unsigned int height,width,depth;
+				lseek(fd, 0x12, SEEK_SET);
+				read(fd, &width, 4);
+				
+				lseek(fd, 0x16, SEEK_SET);
+				read(fd, &height, 4);
+				
+				lseek(fd, 0x1c, SEEK_SET);
+				read(fd, &depth, 2);
+				
+				//保存像素数组
+				int blank = 0;
+				if(width%4)
+				{
+					blank = 4 -	width%4;
+				}
+				char pixel[height*(width+blank)*depth/8];
+				memset(pixel, 0, height*(width+blank)*depth/8);
+				lseek(fd, 0x36, SEEK_SET);
+				read(fd, pixel, height*(width+blank)*depth/8);
+				
+			2.5怎么将解析出来的数据和开发板屏幕联系起来
+				plcd --》映射内存的首地址
+					*(plcd+y*800+x) = color;
+				int i,j,num = 0;
+				unsigned char A = 0;
+				unsigned char R = 0;
+				unsigned char G = 0;
+				unsigned char B = 0;
+				for(i=0; i<height; i++)
+				{
+					for(j=0; j<width; j++)
+					{
+						R = pixel[num++];				
+						G = pixel[num++];				
+						B = pixel[num++];
+						color = A<<24 | R<<16 | G<<8 | B; 
+						lcd_draw_point(j, i, color);
+					}
+					num+=blank;	
+				}
+		1.练习：实现bmp图片的显示
+				并且实现多张图片的滚动显示--》指针数组保存路径 
+		2.作业：实现查找一个目录中的.bmp文件/.jpg文件
+			即将带路径的图片名保存在链表中
+			
+			char *s = st.d_name;
+			int length = strlen(st.d_name);
+			if(strcmp((s+length-4), ".bmp") == 0)
+				//保存到链表
+	
+	3.触摸屏事件的获取
+		输入设备：鼠标、键盘、触摸屏....
+		
+		对于触摸屏事件：
+			int touch_fd = open("/dev/input/event0", O_RDONLY);
+			if(touch_fd < 0)
+			{
+				perror();
+				return -1;
+			}
+		获取触摸屏事件信息：
+			把信息储存到一个结构体里面
+			struct input_event
+			{
+				...
+			
+			}
+			struct input_event ev;
+			read(touch_fd, &ev, sizeof(ev));
+		上述结构体定义在下面的头文件中	
+		#include<linux/input.h>
+		
+		struct input_event
+		{
+			struct timeval time;	//保存事件发生的时间
+			__u16 type;				//表示的是事件的类型
+				1.EV_KEY：按键事件
+				2.EV_REL：鼠标事件
+				3.EV_ABS: 触摸屏事件
+				...
+			__u16 code;				//依据type含义不同而不同
+				1.code 键值  KEY_A
+				2.code 相对坐标 REL_X REL_Y
+				3.code 绝对坐标 ABS_X ABS_Y
+			__s32 value;			//依据code含义不同而不同
+				1.value 按键的状态
+					按下	1
+					弹起    0
+				2.value 相对坐标的位移
+				3.value 绝对坐标
+					code == ABS_X
+					value就是x轴的坐标
+					code == ABS_Y
+					value就是y轴的坐标
+		}
+		
+		解析：
+			struct input_event ev;
+			int x=-1,y=-1;
+			while(1)
+			{
+				read(touch_fd, &ev, sizeof(ev));
+				if(ev.type == EV_ABS && ev.code == ABS_X)
+					x = ev.value;
+				else if(ev.type == EV_ABS && ev.code == ABS_Y)
+					y = ev.value;	
+
+				if(ev.type == EV_KEY && ev.code == TOUCH_BUTTON)
+					if(ev.value == 1)
+						printf("press\n");
+					else
+					{
+						printf("release\n");
+						break;
+					}
+			}
+			
+	4.随机数的产生/系统时间的获取
+		#include <time.h>
+		//设置时间种子
+		srand(time(0));
+		//产生随机数
+		int num = rand()%5;		//对5取余代表产生5以内的随机数0-4
+		
+		//获取系统的当前时间
+		struct tm *localtime(const time_t *timep);
+		struct tm {
+		    int tm_sec;         /* seconds */
+		    int tm_min;         /* minutes */
+		    int tm_hour;        /* hours */
+		    int tm_mday;        /* day of the month */
+		    int tm_mon;         /* month */
+		    int tm_year;        /* year */
+		    int tm_wday;        /* day of the week */
+		    int tm_yday;        /* day in the year */
+		    int tm_isdst;       /* daylight saving time */
+	    };
